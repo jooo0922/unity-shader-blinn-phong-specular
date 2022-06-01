@@ -6,7 +6,12 @@ Shader "Custom/customLight"
         _BumpMap ("NormalMap", 2D) = "bump" {} // 유니티는 인터페이스로부터 입력받는 변수명을 '_BumpMap' 이라고 지으면, 텍스쳐 인터페이스는 노말맵을 넣을 것이라고 인지함.
         _SpecCol ("Specular Color", Color) = (1, 1, 1, 1) // 스펙큘러의 색상을 인터페이스로 받기 위해 프로퍼티 추가
         _SpecPow ("Specular Power", Range(10, 200)) = 100 // 스펙큘러의 강도(거듭제곱. 높을수록 스펙큘러 영역이 좁아짐)를 인터페이스로 받기 위해 프로퍼티 추가
+        _SpecCol2 ("Specular Color2", Color) = (0.7, 0.7, 0.7, 1) // 가짜 스펙큘러의 색상을 인터페이스로 받기 위해 프로퍼티 추가
+        _SpecPow2("Specular Power2", Range(10, 200)) = 50 // 가짜 스펙큘러의 강도(거듭제곱. 높을수록 스펙큘러 영역이 좁아짐)를 인터페이스로 받기 위해 프로퍼티 추가
         _GlossTex ("Gloss Tex", 2D) = "white" {} // 부위별로 스펙큘러 강도를 다르게 조절해주기 위해 필요한 Spec 텍스쳐를 인터페이스로 받기 위해 프로퍼티 추가
+
+        _RimCol("Rim Color", Color) = (0.5, 0.5, 0.5, 1) // 프레넬의 색상을 인터페이스로 받기 위해 프로퍼티 추가
+        _RimPow("Rim Power", Range(1, 10)) = 6 // 프레넬의 두께(강도?, 값이 작을수록 넓어짐)를 인터페이스로 받기 위해 프로퍼티 추가
     }
     SubShader
     {
@@ -22,6 +27,11 @@ Shader "Custom/customLight"
         sampler2D _GlossTex;
         float4 _SpecCol;
         float _SpecPow;
+        float4 _SpecCol2;
+        float _SpecPow2;
+
+        float4 _RimCol;
+        float _RimPow;
 
         struct Input
         {
@@ -80,14 +90,24 @@ Shader "Custom/customLight"
             float3 rimColor; // 최종 프레넬 연산 결과값을 저장할 변수
             float rim = abs(dot(viewDir, s.Normal)); // 뷰 벡터와 노말맵의 노말벡터를 내적한 뒤, 내적결과값에서 음수를 제거하기 위해 abs() 를 사용함. 
             float invrim = 1 - rim; // rim값 자체는 카메라와 향하는 곳일수록 밝고, 가장자리일수록 어두우므로, 1에서 빼줘서 내적값을 뒤집어줘서, 가장자리로 갈수록 밝은 값이 나오도록 함.
-            rimColor = pow(invrim, 6) * float3(0.5, 0.5, 0.5); // 프레넬의 두께와 색상을 조절하기 위해 거듭제곱 처리 및 특정 색상(여기서는 회색이지?)과 곱해줌.
+            rimColor = pow(invrim, _RimPow) * _RimCol.rgb; // 프레넬의 두께와 색상을 조절하기 위해 거듭제곱 처리 및 특정 색상(여기서는 회색이지?)과 곱해줌.
+
+            // Fake Spec term (Fresnel 연산의 부산물인 rim 값을 이용한 가짜 스펙큘러 계산 영역)
+            float3 SpecColor2; // 가짜 스펙큘러를 계산해서 저장할 변수
+            SpecColor2 = pow(rim, _SpecPow2) * _SpecCol2.rgb * s.Gloss; // SpecColor와 마찬가지로 거듭제곱처리, 스펙큘러 색상 적용(여기서는 옅은 회색), s.Gloss 값으로 스펙큘러 강도(opacity) 적용
 
             // Final term (최종 색상값 계산 영역)
             // final.rgb = DiffColor.rgb + SpecColor.rgb; // 램버트 라이팅 연산과 블린-퐁 스펙큘러 연산을 더해서 최종 색상값을 결정함. -> 퐁 반사 모델에서도 앰비언트 컬러 + 디퓨즈 + 스펙큘러 이런 식으로 각 성분의 값을 더해서 계산했었지? (WebGL 책 참고)
-            final.rgb = DiffColor.rgb + SpecColor.rgb + rimColor.rgb; // 프레넬 연산값도 최종 색상에 더해줌.
+            // final.rgb = DiffColor.rgb + SpecColor.rgb + rimColor.rgb; // 프레넬 연산값도 최종 색상에 더해줌.
+            final.rgb = DiffColor.rgb + SpecColor.rgb + rimColor.rgb + SpecColor2.rgb; // 가짜 스펙큘러 값도 최종 색상에 더해줌. (실제 세상에서는 조명이 여러 개 있는 경우가 많으므로, 이런 식으로 rim값을 이용해 가짜 스펙큘러를 추가해주는 게 디테일을 살리기 위해 권장하는 방식이라고 함.)
             final.a = s.Alpha;
 
-            // return final;
+            // 값을 뒤집지않은 rim을 200 제곱해서 리턴해주면, 카메라 시선을 따라 하이라이트 영역이 움직이는 걸 볼 수 있음.
+            // 즉, '뒤집어지지 않은 rim값 == 스펙큘러' 라고도 할 수 있는 것이지! 
+            // Fresnel 연산의 부산물에 불과한 rim값이 사실상 스펙큘러와 유사한 결과를 만들어 내는 것임.
+            // 따라서, 얘를 그냥 spec 값 대신 사용해도 무방함!
+            // return pow(rim, 200); 
+
             return final;
         }
         ENDCG
