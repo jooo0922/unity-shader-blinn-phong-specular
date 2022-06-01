@@ -74,8 +74,17 @@ Shader "Custom/customLight"
             // SpecColor = spec * _SpecCol.rgb; // spec 값은 float 한개니까, 인터페이스로 받아온 스펙큘러 색상값인 _SpecCol.rgb 에 곱해줌으로써, 해당 스펙큘러값 만큼의 밝기값을 갖는 색상을 계산할 수 있음.
             SpecColor = spec * _SpecCol.rgb * s.Gloss; // 스펙큘러의 강도, opacity에 해당하는 구조체 s.Gloss 값을 곱해줌으로써, 부위별 스펙큘러 강도를 조절함.
 
+            // Rim term (Rim 라이트, 즉 Fresnel 계산 영역)
+            // 원래 surf 함수에서 Input 구조체로부터 가져오던 버텍스 -> 카메라 벡터인 viewDir 을 커스텀라이팅 함수에서도 가져올 수 있게 되었으므로,
+            // 가져올 수 있게 된 김에 프레넬도 구연해서 최종 색상값에 더해서 적용해보자는 것.
+            float3 rimColor; // 최종 프레넬 연산 결과값을 저장할 변수
+            float rim = abs(dot(viewDir, s.Normal)); // 뷰 벡터와 노말맵의 노말벡터를 내적한 뒤, 내적결과값에서 음수를 제거하기 위해 abs() 를 사용함. 
+            float invrim = 1 - rim; // rim값 자체는 카메라와 향하는 곳일수록 밝고, 가장자리일수록 어두우므로, 1에서 빼줘서 내적값을 뒤집어줘서, 가장자리로 갈수록 밝은 값이 나오도록 함.
+            rimColor = pow(invrim, 6) * float3(0.5, 0.5, 0.5); // 프레넬의 두께와 색상을 조절하기 위해 거듭제곱 처리 및 특정 색상(여기서는 회색이지?)과 곱해줌.
+
             // Final term (최종 색상값 계산 영역)
-            final.rgb = DiffColor.rgb + SpecColor.rgb; // 램버트 라이팅 연산과 블린-퐁 스펙큘러 연산을 더해서 최종 색상값을 결정함. -> 퐁 반사 모델에서도 앰비언트 컬러 + 디퓨즈 + 스펙큘러 이런 식으로 각 성분의 값을 더해서 계산했었지? (WebGL 책 참고)
+            // final.rgb = DiffColor.rgb + SpecColor.rgb; // 램버트 라이팅 연산과 블린-퐁 스펙큘러 연산을 더해서 최종 색상값을 결정함. -> 퐁 반사 모델에서도 앰비언트 컬러 + 디퓨즈 + 스펙큘러 이런 식으로 각 성분의 값을 더해서 계산했었지? (WebGL 책 참고)
+            final.rgb = DiffColor.rgb + SpecColor.rgb + rimColor.rgb; // 프레넬 연산값도 최종 색상에 더해줌.
             final.a = s.Alpha;
 
             // return final;
