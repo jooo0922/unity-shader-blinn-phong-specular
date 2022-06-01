@@ -6,6 +6,7 @@ Shader "Custom/customLight"
         _BumpMap ("NormalMap", 2D) = "bump" {} // 유니티는 인터페이스로부터 입력받는 변수명을 '_BumpMap' 이라고 지으면, 텍스쳐 인터페이스는 노말맵을 넣을 것이라고 인지함.
         _SpecCol ("Specular Color", Color) = (1, 1, 1, 1) // 스펙큘러의 색상을 인터페이스로 받기 위해 프로퍼티 추가
         _SpecPow ("Specular Power", Range(10, 200)) = 100 // 스펙큘러의 강도(거듭제곱. 높을수록 스펙큘러 영역이 좁아짐)를 인터페이스로 받기 위해 프로퍼티 추가
+        _GlossTex ("Gloss Tex", 2D) = "white" {} // 부위별로 스펙큘러 강도를 다르게 조절해주기 위해 필요한 Spec 텍스쳐를 인터페이스로 받기 위해 프로퍼티 추가
     }
     SubShader
     {
@@ -18,6 +19,7 @@ Shader "Custom/customLight"
 
         sampler2D _MainTex;
         sampler2D _BumpMap;
+        sampler2D _GlossTex;
         float4 _SpecCol;
         float _SpecPow;
 
@@ -25,15 +27,29 @@ Shader "Custom/customLight"
         {
             float2 uv_MainTex;
             float2 uv_BumpMap;
+            float2 uv_GlossTex;
         };
 
         void surf (Input IN, inout SurfaceOutput o)
         {
             fixed4 c = tex2D (_MainTex, IN.uv_MainTex);
+            float4 m = tex2D(_GlossTex, IN.uv_GlossTex); // 스펙큘러 강도 조절을 위해 받아온 텍스쳐(교재에서는 GlossMap 을 사용하지만, 여기서는 Spec 맵을 사용할거임. 알파값을 grayScale 로 생성하기 적합한 게 이거라서...)
             o.Albedo = c.rgb;
 
             // UnpackNormal() 함수는 변환된 노말맵 텍스쳐 형식인 DXTnm 에서 샘플링해온 텍셀값 float4를 인자로 받아 float3 를 리턴해줌.
             o.Normal = UnpackNormal(tex2D(_BumpMap, IN.uv_BumpMap));
+
+            /*
+                스펙큘러 강도 조절을 위해 받아온 Spec 텍스쳐는 jpg 이므로 알파채널을 포함하지 않음. 
+                따라서 유니티에서 Alpha Source 를 'From Gray Scale' 로 지정해서 알파채널을 직접 만들어줌. 
+                이 직접 만들어준 알파채널을 o.Gloss 구조체 속성값에 넣어준 것.
+
+                o.Gloss 프로퍼티는 모델의 부위별 Specular 의 강도(?) 를 표현한 것으로,
+                순수한 Specular 의 opacity 같은 느낌이라고 보면 됨.
+
+                해당 설명은 p.253 에 나와있음.
+            */
+            o.Gloss = m.a;
             o.Alpha = c.a;
         }
 
@@ -55,10 +71,11 @@ Shader "Custom/customLight"
             float3 H = normalize(lightDir + viewDir); // 우선 카메라벡터와 조명벡터의 절반벡터를 구한 뒤, 길이를 1로 맞춤. (p.354 참고)
             float spec = saturate(dot(H, s.Normal)); // 본격적인 스펙큘러 연산. 하프벡터와 노말벡터를 내적함. -> 내적은 -1 ~ 1 사이니까 saturate() 로 음수값은 0으로 초기화함.
             spec = pow(spec, _SpecPow); // 근데 위에 처럼 날것의 spec 값을 그대로 리턴하면, 스펙큘러 영역이 너무 넓어서 죄다 흰색으로 찍힘. -> 그래서 이거를 100거듭제곱 해줘서, 특정 구간부터 확 밝아지도록 한 것. (p.330 참고)
-            SpecColor = spec * _SpecCol.rgb; // spec 값은 float 한개니까, 인터페이스로 받아온 스펙큘러 색상값인 _SpecCol.rgb 에 곱해줌으로써, 해당 스펙큘러값 만큼의 밝기값을 갖는 색상을 계산할 수 있음.
+            // SpecColor = spec * _SpecCol.rgb; // spec 값은 float 한개니까, 인터페이스로 받아온 스펙큘러 색상값인 _SpecCol.rgb 에 곱해줌으로써, 해당 스펙큘러값 만큼의 밝기값을 갖는 색상을 계산할 수 있음.
+            SpecColor = spec * _SpecCol.rgb * s.Gloss; // 스펙큘러의 강도, opacity에 해당하는 구조체 s.Gloss 값을 곱해줌으로써, 부위별 스펙큘러 강도를 조절함.
 
             // Final term (최종 색상값 계산 영역)
-            final.rgb = DiffColor.rgb + SpecColor.rgb; // 램버트 라이팅 연산과 블린-퐁 스펙큘러 연산을 더해서 최종 색상값을 결정함.
+            final.rgb = DiffColor.rgb + SpecColor.rgb; // 램버트 라이팅 연산과 블린-퐁 스펙큘러 연산을 더해서 최종 색상값을 결정함. -> 퐁 반사 모델에서도 앰비언트 컬러 + 디퓨즈 + 스펙큘러 이런 식으로 각 성분의 값을 더해서 계산했었지? (WebGL 책 참고)
             final.a = s.Alpha;
 
             // return final;
